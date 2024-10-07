@@ -27,6 +27,13 @@ def financialNewsScraper(companies: List[str], pages: int = 10):
     counter = 0
     for company in companies:
         for page in range(1, pages + 1):
+            output_dir = Path(f'./data/{company}_fin_news')
+            output_dir.mkdir(exist_ok=True)
+
+            output_filename =f"./data/{company}_fin_news/{page}.csv"
+            if os.path.exists(output_filename):
+                continue
+            
             url = f"https://markets.businessinsider.com/news/{company}-stock?p={page}"
 
             response = requests.get(url)
@@ -56,10 +63,11 @@ def financialNewsScraper(companies: List[str], pages: int = 10):
                 )
                 counter += 1
             print(f"Page number of {company}: {page}")
+            
+            df.to_csv(output_filename)
 
         print(f"{counter} number of articles scraped")
 
-        df.to_csv(f"./data/{company}_fin_news.csv")
     print("Scraping completed.")
 
 
@@ -104,15 +112,20 @@ def export_details(item):
 
 
 def details_scraper():
+    data_list = []
     for entry in os.scandir('data'):
         if entry.name.endswith('.csv'):
             df = pd.read_csv(entry.path)
             for _, item in df.iterrows():
-                export_details(item)
+                data_list.append(item)
+
+    print(len(data_list))
+    for item in data_list:
+        print(item['link'])
     
 
 def main():
-    # financialNewsScraper(["amzn", "aapl", "msft", "nvda"], 1)
+    financialNewsScraper(["amzn", "aapl", "msft", "nvda"], 40)
     details_scraper()
 
 
