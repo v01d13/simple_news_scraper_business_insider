@@ -6,7 +6,9 @@ from pathlib import Path
 import pandas as pd
 import os
 import json
-
+import re
+from collections import Counter
+from multiprocessing import Pool
 
 def financialNewsScraper(companies: List[str], pages: int = 10):
     """
@@ -113,16 +115,27 @@ def export_details(item):
 
 def details_scraper():
     data_list = []
-    for entry in os.scandir('data'):
-        if entry.name.endswith('.csv'):
-            df = pd.read_csv(entry.path)
-            for _, item in df.iterrows():
-                data_list.append(item)
+    for scrip_entry in os.scandir('data'):
+        if not scrip_entry.is_dir():
+            continue
 
+        for entry in os.scandir(scrip_entry.path):
+            if len(data_list) > 1000:
+                break
+            if entry.name.endswith('.csv'):
+                df = pd.read_csv(entry.path)
+                for _, item in df.iterrows():
+                    data_list.append(item)
+
+    source_list = []
     print(len(data_list))
     for item in data_list:
-        print(item['link'])
-    
+        source = re.findall(r'(https?:.*\.com)', item['link'])
+        source_list.extend(source)
+    print(Counter(source_list))
+
+    pool = Pool(5)
+    pool.map(export_details, data_list)
 
 def main():
     financialNewsScraper(["amzn", "aapl", "msft", "nvda"], 40)
