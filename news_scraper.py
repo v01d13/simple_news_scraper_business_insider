@@ -1,120 +1,80 @@
-from bs4 import BeautifulSoup as Soup
 import requests
-import pandas as pd
-from typing import List
-from pathlib import Path
-import pandas as pd
-import os
-import json
+from bs4 import BeautifulSoup as Soup
+from typing import Dict, List, Optional
+import re
+from multiprocessing import Pool, cpu_count
 
 
-def financialNewsScraper(companies: List[str], pages: int = 10):
-    """
-    Scrapes financial news articles for a list of companies from Business Insider.
-    Args:
-        companies (List[str]): A list of company names to scrape news for.
-        pages (int, optional): The number of pages to scrape for each company. Defaults to 10.
-    Returns:
-        None: The function saves the scraped data to CSV files named after each company.
-    Note:
-        - The function uses the `requests` library to send HTTP requests.
-        - The function uses the `BeautifulSoup` library to parse HTML content.
-        - The function uses the `pandas` library to handle data and save it to CSV files.
-    """
+class NewsScraper:
 
-    df = pd.DataFrame(columns=["company", "date_time", "title", "source", "link"])
+    def __init__(self):
+        self.cpu = cpu_count()
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.82 Safari/537.36"
+        }
 
-    counter = 0
-    for company in companies:
-        for page in range(1, pages + 1):
-            url = f"https://markets.businessinsider.com/news/{company}-stock?p={page}"
+    def fetch_html(self, link: str) -> tuple[Optional[Soup()], str]: # type: ignore
+        try:
+            response = requests.get(link, headers=self.headers)
+            if response.status_code != 200:
+                domain = re.search(r"https?://(?:www\.)?([^.]+)", link)
 
-            response = requests.get(url)
-            html = response.text
-            soup = Soup(html, "lxml")
-            articles = soup.find_all("div", class_="latest-news__story")
+                print(f"{domain.group(1)} Status code: {response.status_code}")
+                return None, link
+            details_html = response.text
+            details = Soup(details_html, "lxml")
+            return details, link
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+            return None, link
 
-            for article in articles:
-                date_time = article.find("time", class_="latest-news__date").get(
-                    "datetime"
+    def fetch_helper(self, links: List[str], sources: List[str]) -> Dict:
+        data = {}
+        assert len(links) == len(sources)
+        with Pool(processes=self.cpu) as pool:
+            results = pool.map(self.fetch_html, links)
+            for details, link in results:
+                if details is not None:
+                    data[link] = details
+        return data
+
+    def financialNewsScraper(self, companies: List[str], pages: int = 10):
+        for company in companies:
+            for page in range(1, pages + 1):
+                details = []
+                urls = []
+                sources = []
+
+                url = (
+                    f"https://markets.businessinsider.com/news/{company}-stock?p={page}"
                 )
-                title = article.find("a", class_="news-link").text
-                source = article.find("span", class_="latest-news__source").text
-                link = article.find("a", class_="news-link").get("href")
+                response = requests.get(url, headers=self.headers)
 
-                if link.startswith('/'):
-                    link = f'https://markets.businessinsider.com{link}'
+                if response.status_code != 200:
+                    print(f"Failed to retrieve the {company} page {page}")
+                    continue
 
-                df = pd.concat(
-                    [
-                        pd.DataFrame(
-                            [[company, date_time, title, source, link]], columns=df.columns
-                        ),
-                        df,
-                    ],
-                    ignore_index=True,
+                html = response.text
+                soup = Soup(html, "lxml")
+                articles = soup.find_all("div", class_="latest-news__story")
+                for article in articles:
+                    date_time = article.find("time", class_="latest-news__date").get(
+                        "datetime"
+                    )
+                    title = article.find("a", class_="news-link").text
+                    source = article.find("span", class_="latest-news__source").text
+                    link = article.find("a", class_="news-link").get("href")
+                    if link.startswith("/"):
+                        link = f"https://markets.businessinsider.com{link}"
+                    urls.append(link)
+                    sources.append(source)
+
+                # Fetch details for each URL
+                data = self.fetch_helper(urls, sources)
+                print(
+                    f"Page {page} of company {company} done. Collected {len(data)} articles."
                 )
-                counter += 1
-            print(f"Page number of {company}: {page}")
-
-        print(f"{counter} number of articles scraped")
-
-        df.to_csv(f"./data/{company}_fin_news.csv")
-    print("Scraping completed.")
 
 
-def export_details(item):
-    try:
-        link = item['link']
-        output_file_name = link.split('/')[-1]  # get last part of the url
-        output_file_name = output_file_name.split('?')[0]  # removes url search params
-
-        output_dir = Path(f"data/{item['company']}")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        output_path = f"{str(output_dir)}/{output_file_name}.json"
-
-        if os.path.exists(output_path):
-            return
-        
-        details = requests.get(link)
-        soup = Soup(details.text, 'lxml')
-        
-        if link.startswith('https://markets.businessinsider.com/'):
-            details = soup.find('div', class_='news-content')
-        elif link.startswith('https://seekingalpha.com/'):
-            return
-        else:
-            return
-        
-        if details is None:
-            return
-    
-        with open(output_path, 'w') as f:
-            json.dump({
-                'company': item['company'],
-                'date_time': item['date_time'],
-                'title': item['title'],
-                'link': link,
-                'details': details.get_text()
-            }, f)
-            print(output_path)
-    except Exception as ex:
-        print(item['link'], ex)
-
-
-def details_scraper():
-    for entry in os.scandir('data'):
-        if entry.name.endswith('.csv'):
-            df = pd.read_csv(entry.path)
-            for _, item in df.iterrows():
-                export_details(item)
-    
-
-def main():
-    # financialNewsScraper(["amzn", "aapl", "msft", "nvda"], 1)
-    details_scraper()
-
-
-if __name__ == "__main__":
-    main()
+scrape = NewsScraper()
+scrape.financialNewsScraper(["aapl", "amzn", "msft", "nvda"])
